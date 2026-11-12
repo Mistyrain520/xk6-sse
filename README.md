@@ -2,7 +2,13 @@
 
 A [k6](https://go.k6.io/k6) extension for [Server-Sent Events (SSE)](https://en.wikipedia.org/wiki/Server-sent_events).
 
-This is a k6 **community** extension maintained by the open source community. Since [the k6 announcement](https://github.com/grafana/k6/issues/746#issuecomment-3249781235), no custom build with [xk6](https://github.com/grafana/xk6) is required—just `import sse from "k6/x/sse"` and k6 will resolve it automatically.
+The upstream `phymbert/xk6-sse` project is listed as a k6 **community** extension. With k6 v1.2.0 or later and automatic extension resolution enabled, importing `sse from "k6/x/sse"` lets k6 resolve and load that upstream community release automatically. See [Use automatic extension resolution](https://grafana.com/docs/k6/latest/extensions/run/#use-automatic-extension-resolution) for its requirements and limitations.
+
+Automatic resolution follows the Grafana extension catalog and does not automatically discover arbitrary forks. This fork is intended to be packaged into the k6auto custom binary, so builds must include it explicitly with [xk6](https://github.com/grafana/xk6). Use the module path declared in `go.mod` when adding the extension:
+
+```shell
+xk6 build v2.0.0 --with github.com/Mistyrain520/xk6-sse/v2=.
+```
 
 See the [community extensions list](https://grafana.com/docs/k6/latest/extensions/explore/#community-extensions) for other community-supported packages. The [K6 SSE Extension design](docs/design/021-sse-api.md) describes the API design.
 
