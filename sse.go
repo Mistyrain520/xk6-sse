@@ -366,73 +366,100 @@ func (c *Client) readEvents(readChan chan Event, errorChan chan error, closeChan
 	reader := bufio.NewReader(c.resp.Body)
 	ev := Event{}
 	var buf bytes.Buffer
+	pending := false
+
+	dispatch := func() bool {
+		if !pending {
+			return true
+		}
+		// Trailing newlines are removed.
+		ev.Data = strings.TrimRightFunc(buf.String(), func(r rune) bool {
+			return r == '\r' || r == '\n'
+		})
+		select {
+		case readChan <- ev:
+			buf.Reset()
+			ev = Event{}
+			pending = false
+			return true
+		case <-c.done:
+			return false
+		}
+	}
 
 	for {
 		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				select {
-				case closeChan <- -1:
-					return
-				case <-c.done:
+		eof := errors.Is(err, io.EOF)
+		if err != nil && !eof {
+			select {
+			case errorChan <- err:
+				return
+			case <-c.done:
+				return
+			}
+		}
+
+		if len(line) > 0 {
+			switch {
+			// id of event
+			case hasPrefix(line, "id: "):
+				ev.ID = stripPrefix(line, 4)
+				pending = true
+			case hasPrefix(line, "id:"):
+				ev.ID = stripPrefix(line, 3)
+				pending = true
+
+			// Comment
+			case hasPrefix(line, ": "):
+				ev.Comment = stripPrefix(line, 2)
+				pending = true
+			case hasPrefix(line, ":"):
+				ev.Comment = stripPrefix(line, 1)
+				pending = true
+
+			// name of event
+			case hasPrefix(line, "event: "):
+				ev.Name = stripPrefix(line, 7)
+				pending = true
+			case hasPrefix(line, "event:"):
+				ev.Name = stripPrefix(line, 6)
+				pending = true
+
+			// event data
+			case hasPrefix(line, "data: "):
+				buf.Write(line[6:])
+				pending = true
+
+			case hasPrefix(line, "data:"):
+				buf.Write(line[5:])
+				pending = true
+
+			case hasPrefix(line, "retry:"):
+				// Retry, do nothing for now
+
+			// end of event
+			case isLineEnd(line):
+				if !dispatch() {
 					return
 				}
-			} else {
+			default:
 				select {
-				case errorChan <- err:
-					return
+				case errorChan <- errors.New("unknown event: " + string(line)):
 				case <-c.done:
 					return
 				}
 			}
 		}
 
-		switch {
-		// id of event
-		case hasPrefix(line, "id: "):
-			ev.ID = stripPrefix(line, 4)
-		case hasPrefix(line, "id:"):
-			ev.ID = stripPrefix(line, 3)
-
-		// Comment
-		case hasPrefix(line, ": "):
-			ev.Comment = stripPrefix(line, 2)
-		case hasPrefix(line, ":"):
-			ev.Comment = stripPrefix(line, 1)
-
-		// name of event
-		case hasPrefix(line, "event: "):
-			ev.Name = stripPrefix(line, 7)
-		case hasPrefix(line, "event:"):
-			ev.Name = stripPrefix(line, 6)
-
-		// event data
-		case hasPrefix(line, "data: "):
-			buf.Write(line[6:])
-
-		case hasPrefix(line, "data:"):
-			buf.Write(line[5:])
-
-		case hasPrefix(line, "retry:"):
-			// Retry, do nothing for now
-
-		// end of event
-		case isLineEnd(line):
-			// Trailing newlines are removed.
-			ev.Data = strings.TrimRightFunc(buf.String(), func(r rune) bool {
-				return r == '\r' || r == '\n'
-			})
-
-			select {
-			case readChan <- ev:
-				buf.Reset()
-				ev = Event{}
-			case <-c.done:
+		if eof {
+			// EventSource implementations dispatch a fully-read final event even
+			// when the stream closes without the optional trailing blank line.
+			if !dispatch() {
 				return
 			}
-		default:
 			select {
-			case errorChan <- errors.New("unknown event: " + string(line)):
+			case closeChan <- -1:
+				return
 			case <-c.done:
 				return
 			}
@@ -556,5 +583,8 @@ func hasPrefix(s []byte, prefix string) bool {
 }
 
 func stripPrefix(line []byte, start int) string {
-	return string(line[start : len(line)-1])
+	if start >= len(line) {
+		return ""
+	}
+	return strings.TrimRight(string(line[start:]), "\r\n")
 }

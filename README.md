@@ -7,6 +7,12 @@ The upstream `phymbert/xk6-sse` project is listed as a k6 **community** extensio
 Automatic resolution follows the Grafana extension catalog and does not automatically discover arbitrary forks. This fork is intended to be packaged into the k6auto custom binary, so builds must include it explicitly with [xk6](https://github.com/grafana/xk6). Use the module path declared in `go.mod` when adding the extension:
 
 ```shell
+xk6 build v2.0.0 --with github.com/Mistyrain520/xk6-sse/v2@v2.0.1
+```
+
+To build against an unreleased local checkout:
+
+```shell
 xk6 build v2.0.0 --with github.com/Mistyrain520/xk6-sse/v2=.
 ```
 

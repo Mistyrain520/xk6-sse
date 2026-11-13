@@ -119,6 +119,7 @@ func newTestState(tb testing.TB) testState {
 	httpBin.Mux.Handle("/sse", sseHandler(tb, false))
 	httpBin.Mux.Handle("/sse-invalid", sseHandler(tb, true))
 	httpBin.Mux.Handle("/sse-slow", sseSlowHandler(tb))
+	httpBin.Mux.Handle("/sse-no-final-blank-line", sseNoFinalBlankLineHandler(tb))
 
 	testRuntime := modulestest.NewRuntime(tb)
 	registry := metrics.NewRegistry()
@@ -539,6 +540,40 @@ func TestLineEnding(t *testing.T) {
 	assertSseCount(t, samplesBuf, sr("HTTPBIN_IP_URL/sse-line-endings"), 2)
 }
 
+func TestOpenFlushesFinalEventAtEOF(t *testing.T) {
+	t.Parallel()
+	test := newTestState(t)
+	sr := test.tb.Replacer.Replace
+
+	_, err := test.VU.Runtime().RunString(sr(`
+	var events = [];
+	var res = sse.open("HTTPBIN_IP_URL/sse-no-final-blank-line", function(client){
+		client.on("event", function(event) {
+			events.push(event);
+		});
+	});
+	if (events.length !== 3) {
+		throw new Error("expected 3 events, got " + events.length);
+	}
+	if (events[0].name !== "meta") {
+		throw new Error("unexpected first event name: " + events[0].name);
+	}
+	if (events[1].name !== "delta") {
+		throw new Error("unexpected second event name: " + events[1].name);
+	}
+	if (events[2].name !== "done") {
+		throw new Error("unexpected final event name: " + events[2].name);
+	}
+	if (events[2].data !== '{"request_id":"local-request"}') {
+		throw new Error("unexpected final event data: " + events[2].data);
+	}
+	`))
+
+	require.NoError(t, err)
+	samplesBuf := metrics.GetBufferedSamples(test.samples)
+	assertSseCount(t, samplesBuf, sr("HTTPBIN_IP_URL/sse-no-final-blank-line"), 3)
+}
+
 func TestTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -601,6 +636,23 @@ func sseLineEndingsHandler(t testing.TB) http.Handler {
 
 		// 2. Event with LF line endings (not preceded by CR)
 		_, err = w.Write([]byte("data: LF line ending\n\n"))
+		require.NoError(t, err)
+	})
+}
+
+// sseNoFinalBlankLineHandler omits the blank line after the final event.
+// EventSource clients are expected to dispatch the pending event at EOF.
+func sseNoFinalBlankLineHandler(t testing.TB) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, err := w.Write([]byte(
+			"event: meta\n" +
+				"data: {\"step\":1}\n\n" +
+				"event: delta\n" +
+				"data: {\"text\":\"local stream\"}\n\n" +
+				"event: done\n" +
+				"data: {\"request_id\":\"local-request\"}\n",
+		))
 		require.NoError(t, err)
 	})
 }
